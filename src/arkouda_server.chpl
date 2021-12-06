@@ -383,6 +383,7 @@ proc main() {
                 when "segmentedTailStreamTri"   {repTuple = segStreamTailTriCntMsg(cmd, args, st);}
                 when "segmentedRMAT"     {repTuple = segrmatgenMsg(cmd, args, st);}
                 when "segmentedGraphBC"  {repTuple = segBCMsg(cmd, args, st);}
+                when "segmentedGraphCC"  {repTuple = segCCMsg(cmd, args, st);}
                 when "segmentedGraphBFS" {repTuple = segBFSMsg(cmd, args, st);}
                 when "segmentedGraphTri" {repTuple = segTriMsg(cmd, args, st);}
                 when "segmentedTruss"       {repTuple = segTrussMsg(cmd, args, st);}

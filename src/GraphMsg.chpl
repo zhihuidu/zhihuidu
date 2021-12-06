@@ -2154,8 +2154,6 @@ module GraphMsg {
       return new MsgTuple(repMsg, MsgType.NORMAL);
   }
 
-
-
   proc segBCMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
       var (n_verticesN, n_edgesN, directedN, weightedN, restpart) = payload.splitMsgToTuple(5); 
 
@@ -13628,7 +13626,7 @@ module GraphMsg {
 
 
 
-// directly read a stream from given file and build the SegGraph class in memory
+  // directly read a stream from given file and build the SegGraph class in memory
   proc segStreamTriCntMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
       var (NeS,NvS,ColS,DirectedS, FileName,FactorS) = payload.splitMsgToTuple(6);
       //writeln("======================Graph Reading=====================");
@@ -14311,12 +14309,7 @@ module GraphMsg {
 
   }
 
-
-
-
-
-
-// directly read a stream from given file and build the SegGraph class in memory
+  // directly read a stream from given file and build the SegGraph class in memory
   proc segStreamPLTriCntMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
       var (NeS,NvS,ColS,DirectedS, FileName,FactorS, CaseS) = payload.splitMsgToTuple(7);
       //writeln("======================Graph Reading=====================");
@@ -15184,21 +15177,7 @@ module GraphMsg {
 
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// directly read a stream from given file and build the SegGraph class in memory
+  // directly read a stream from given file and build the SegGraph class in memory
   proc segStreamHeadTriCntMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
       var (NeS,NvS,ColS,DirectedS, FileName,FactorS) = payload.splitMsgToTuple(6);
       //writeln("======================Graph Reading=====================");
@@ -15882,11 +15861,7 @@ module GraphMsg {
 
   }
 
-
-
-
-
-// directly read a stream from given file and build the SegGraph class in memory
+  // directly read a stream from given file and build the SegGraph class in memory
   proc segStreamTailTriCntMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
       var (NeS,NvS,ColS,DirectedS, FileName,FactorS) = payload.splitMsgToTuple(6);
       //writeln("======================Graph Reading=====================");
@@ -16570,11 +16545,7 @@ module GraphMsg {
   }
 
 
-
-
-
-
-// directly read a stream from given file and build the SegGraph class in memory
+  // directly read a stream from given file and build the SegGraph class in memory
   proc segStreamMidTriCntMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
       var (NeS,NvS,ColS,DirectedS, FileName,FactorS) = payload.splitMsgToTuple(6);
       //writeln("======================Graph Reading=====================");
@@ -17254,23 +17225,620 @@ module GraphMsg {
       writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
       smLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),repMsg);
       return new MsgTuple(repMsg, MsgType.NORMAL);
-
   }
+  /*****************************/
+  //Connected Component Methods//
+  /*****************************/
+  proc segCCMsg(cmd: string, payload: string, st: borrowed SymTab): MsgTuple throws {
+    // Get the values passeed to Python and now, Chapel. 
+    var (n_verticesN, n_edgesN, directedN, weightedN, restpart) = payload.splitMsgToTuple(5);
+    
+    // Initialize the variables with graph data. 
+    var Nv = n_verticesN:int; 
+    var Ne = n_edgesN:int; 
+    var Directed = directedN:int; 
+    var Weighted = weightedN:int; 
+    
+    // Declare the other variables to be used. 
+    var CCName:string; 
+    var srcN, dstN, startN, neighbourN, vweightN, eweightN, rootN:string;
+    var srcRN, dstRN, startRN, neighbourRN:string;
+    
+    // Initialize the distributed visited array. 
+    var visited = makeDistArray(Nv, int); 
+    
+    // Initialize the timer to track the execution of the implementation. 
+    var timer:Timer; 
+    timer.start(); 
 
+    // Change the visited array to all -1. 
+    coforall loc in Locales {
+      on loc {
+        forall i in visited.localSubdomain() {
+          visited[i] = -1; 
+        }
+      }
+    }
 
+    // Implementation of the algorithm for undirected graphs, they can be 
+    // weighted or unweighted. 
+    proc cc_kernel_und(nei:[?D1] int, start_i:[?D2] int,src:[?D3] int, dst:[?D4] int, neiR:[?D11] int, start_iR:[?D12] int,srcR:[?D13] int, dstR:[?D14] int):string throws { 
+      // Look for the first instance of -1 and get the first vertex to
+      // start BFS at. The first component is obviously component 1. 
+      var finder = visited.find(-1); 
+      var unvisited:bool = finder[0]; 
+      var nextVertex:int = finder[1];
+      var component:int = 1; 
 
+      // writeln("src=", src);
+      // writeln("dst=", dst);
+      // writeln("nei=", nei);
+      // writeln("start_i=", start_i);
 
+      // writeln("srcR=", srcR);
+      // writeln("dstR=", dstR);
+      // writeln("neiR=", neiR);
+      // writeln("start_iR=", start_iR);
 
+      while(unvisited) {
+        // Current level starts at 0.
+        var cur_level = 0; 
 
+        // Distributed bags used to keep the current and the next frontiers
+        // during the execution of the BFS steps. 
+        var SetCurF = new DistBag(int, Locales);
+        var SetNextF = new DistBag(int, Locales); 
 
+        // Initialize the current frontier. 
+        SetCurF.add(nextVertex); 
 
+        // Size of the current frontier. 
+        var numCurF:int = 1; 
 
+        // Top-down and bottom-up counters. 
+        var topdown:int = 0; 
+        var bottomup:int = 0; 
 
+        // Make the depth array. 
+        var depth = makeDistArray(Nv, int); 
 
+        // Initialize the depth array. 
+        coforall loc in Locales {
+          on loc {
+            forall i in visited.localSubdomain() {
+              depth[i] = -1; 
+            }
+          }
+        }
 
+        // The BFS loop for while the number of vertices in the current 
+        // frontier is greater than 0. 
+        while(numCurF > 0) {
+          coforall loc in Locales with (ref SetNextF, + reduce topdown, + reduce bottomup) {
+            on loc {
+              // Get references to the arrays we will be using so 
+              // data is not copied.
+              ref srcf = src; 
+              ref df = dst; 
+              ref nf = nei; 
+              ref sf = start_i; 
 
+              ref srcfR = srcR; 
+              ref dfR = dstR; 
+              ref nfR = neiR; 
+              ref sfR = start_iR;
 
+              // Get from edge arrays the low and high indices. 
+              var edgeBegin = src.localSubdomain().low; 
+              var edgeEnd = src.localSubdomain().high; 
 
+              // Test variables.
+              var arrBegin = nei.localSubdomain().low; 
+              var arrEnd = nei.localSubdomain().high; 
+
+              // writeln("On loc ", loc, " src=", src[edgeBegin..edgeEnd]);
+              // writeln("On loc ", loc, " dst=", dst[edgeBegin..edgeEnd]); 
+              // writeln("On loc ", loc, " srcR=", srcR[edgeBegin..edgeEnd]);
+              // writeln("On loc ", loc, " dstR=", dstR[edgeBegin..edgeEnd]); 
+              // writeln("On loc ", loc, " nei=", nei[arrBegin..arrEnd]);
+              // writeln("On loc ", loc, " neiR=", neiR[arrBegin..arrEnd]); 
+              // writeln("On loc ", loc, " start_i=", start_i[arrBegin..arrEnd]);
+              // writeln("On loc ", loc, " start_iR=", start_iR[arrBegin..arrEnd]);
+                      
+              // Get the start and end vertices from the edge arrays.
+              var vertexBegin=src[edgeBegin];
+              var vertexEnd=src[edgeEnd];
+              var vertexBeginR=srcR[edgeBegin];
+              var vertexEndR=srcR[edgeEnd];
+
+              // Check to see if x is local, between low and high. 
+              // Helper method for the BFS traversal. 
+              proc xlocal(x:int, low:int, high:int) : bool {
+                if (low <= x && x <= high) {
+                  return true;
+                } 
+                else {
+                  return false;
+                }
+              }
+                      
+              // These steps I do manually here wheras in the BFS
+              // code they are done before the calling of the 
+              // procedure. This is a temporary workaround! 
+              var GivenRatio = -0.6 * -1;
+              var LF = 1; 
+                      
+              // If the ratio is ever greater than 0.6, bottom-up is
+              // activated. 
+              var switchratio = (numCurF:real) / nf.size:real;
+                      
+              /****************** TOP DOWN ********************/
+              if (switchratio < GivenRatio) {
+                topdown+=1;
+                forall i in SetCurF with (ref SetNextF) {
+                  // Current edge has the vertex. 
+                  if ((xlocal(i, vertexBegin, vertexEnd)) || (LF == 0)) {
+                    var numNF = nf[i];
+                    var edgeId = sf[i];
+                    var nextStart = max(edgeId, edgeBegin);
+                    var nextEnd = min(edgeEnd, edgeId+numNF-1);
+                    ref NF = df[nextStart..nextEnd];
+                    forall j in NF with (ref SetNextF){
+                      if (depth[j] == -1) {
+                        depth[j] = cur_level+1;
+                        SetNextF.add(j);
+                      }
+                      if (visited[i] == -1) {
+                        visited[i] = component; 
+                      }
+                    }
+                  } 
+                  if ((xlocal(i, vertexBeginR, vertexEndR)) || (LF == 0))  {
+                    var numNF = nfR[i];
+                    var edgeId = sfR[i];
+                    var nextStart = max(edgeId, edgeBegin);
+                    var nextEnd = min(edgeEnd, edgeId+numNF-1);
+                    ref NF = dfR[nextStart..nextEnd];
+                    forall j in NF with (ref SetNextF) {
+                      if (depth[j] == -1) {
+                        depth[j] = cur_level+1;
+                        SetNextF.add(j);
+                      }
+                      if (visited[i] == -1) {
+                        visited[i] = component; 
+                      }
+                    }
+                  }
+                }//end forall
+              } 
+              /****************** BOTTOM UP ********************/
+              else {
+                bottomup+=1;
+                forall i in vertexBegin..vertexEnd  with (ref SetNextF) {
+                  if (depth[i] == -1) {
+                    var numNF = nf[i];
+                    var edgeId = sf[i];
+                    var nextStart = max(edgeId, edgeBegin);
+                    var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                    ref NF = df[nextStart..nextEnd];
+                    forall j in NF with (ref SetNextF){
+                      if (SetCurF.contains(j)) {
+                        depth[i] = cur_level+1;
+                        SetNextF.add(i);
+                      }
+                      if (visited[i] == -1) {
+                        visited[i] = component; 
+                      }
+                    }
+
+                  }
+                }
+                forall i in vertexBeginR..vertexEndR  with (ref SetNextF) {
+                  if (depth[i] == -1) {
+                    var numNF = nfR[i];
+                    var edgeId = sfR[i];
+                    var nextStart = max(edgeId, edgeBegin);
+                    var nextEnd = min(edgeEnd, edgeId+numNF - 1);
+                    ref NF = dfR[nextStart..nextEnd];
+                    forall j in NF with (ref SetNextF)  {
+                      if (SetCurF.contains(j)) {
+                        depth[i] = cur_level+1;
+                        SetNextF.add(i);
+                      }
+                      if (visited[i] == -1) {
+                        visited[i] = component; 
+                      }
+                    }
+                  }
+                }
+              }
+            }//end on loc
+          }//end coforall loc
+          cur_level+=1;
+          numCurF=SetNextF.getSize();
+          SetCurF<=>SetNextF;
+          SetNextF.clear();
+        }//end while  
+
+        finder = visited.find(-1);
+        unvisited = finder[0]; 
+        nextVertex = finder[1];
+        component += 1; 
+
+        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        // writeln("$$$$$$$$$$$$$$$Search Radius = ", cur_level+1,"$$$$$$$$$$$$$$$$$$$$$$");
+        // writeln("$$$$$$$$$$number of top down = ",topdown, " number of bottom up=", bottomup,"$$$$$$");
+        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+      } // end outermost while
+      writeln("Naive visited = ", visited); 
+      return "success";
+    }//end of cc_kernel_und
+
+    // Implementation of the optimized algorithm for undirected graphs, 
+    // they can be weighted or unweighted. 
+    proc cc_kernel_und_opt(nei:[?D1] int, start_i:[?D2] int,src:[?D3] int, dst:[?D4] int, neiR:[?D11] int, start_iR:[?D12] int,srcR:[?D13] int, dstR:[?D14] int):string throws { 
+      // Initialize the distributed loop over the locales. All the work is going to be split
+      // amongst how many locales are available in a cluster. 
+      coforall loc in Locales {
+        on loc {
+          // Initialize the nodes set.
+          var nodes: set(int, parSafe=true);  
+          var low = src.localSubdomain().low; 
+          var high = src.localSubdomain().high; 
+
+          forall v in src[low..high] with (ref nodes) {
+            nodes.add(v); 
+          }
+          forall v in srcR[low..high] with (ref nodes) {
+            nodes.add(v); 
+          }
+
+          // writeln("nodes on loc ", loc, " = ", nodes); 
+
+          // Create visited array. 
+          var vis: [0..Nv-1] int; 
+          // var vis = makeDistArray(Nv, int); 
+          forall i in vis {
+            i = -1; 
+          }
+
+          var component = 1; 
+          while (!nodes.isEmpty()) {
+            // Get the root. 
+            var temp = nodes.toArray(); 
+            var root = temp[0]; 
+            
+            // Current level starts at 0.
+            var cur_level = 0; 
+            // var cur_level = here.id * Nv; 
+
+            // Distributed bags used to keep the current and the next frontiers
+            // during the execution of the BFS steps. 
+            var SetCurF = new DistBag(int, Locales);
+            var SetNextF = new DistBag(int, Locales); 
+
+            // Initialize the current frontier. 
+            SetCurF.add(root); 
+
+            // Size of the current frontier. 
+            var numCurF:int = 1; 
+
+            // Top-down and bottom-up counters. 
+            var topdown:int = 0; 
+            var bottomup:int = 0; 
+
+            // Make the depth array. 
+            var depth = makeDistArray(Nv, int); 
+
+            // Initialize the depth array. 
+            coforall loc in Locales {
+              on loc {
+                forall i in visited.localSubdomain() {
+                  depth[i] = -1; 
+                }
+              }
+            }
+
+            // The BFS while loop for while the number of vertices in the current 
+            // frontier is greater than 0. 
+            while(numCurF > 0) {
+              coforall loc in Locales with (ref SetNextF, + reduce topdown, + reduce bottomup, ref nodes) {
+                on loc {
+                  // Get references to the arrays we will be using so 
+                  // data is not copied.
+                  ref srcf = src; 
+                  ref df = dst; 
+                  ref nf = nei; 
+                  ref sf = start_i; 
+
+                  ref srcfR = srcR; 
+                  ref dfR = dstR; 
+                  ref nfR = neiR; 
+                  ref sfR = start_iR;
+
+                  // Get from edge arrays the low and high indices. 
+                  var edgeBegin = src.localSubdomain().low; 
+                  var edgeEnd = src.localSubdomain().high; 
+
+                  var edgeBegin1 = srcR.localSubdomain().low; 
+                  var edgeEnd1 = srcR.localSubdomain().high; 
+
+                  // Test variables.
+                  var arrBegin = nei.localSubdomain().low; 
+                  var arrEnd = nei.localSubdomain().high; 
+
+                  writeln("On loc ", loc, " src=", src[edgeBegin..edgeEnd]);
+                  writeln("On loc ", loc, " dst=", dst[edgeBegin..edgeEnd]); 
+                  writeln("On loc ", loc, " srcR=", srcR[edgeBegin1..edgeEnd1]);
+                  writeln("On loc ", loc, " dstR=", dstR[edgeBegin1..edgeEnd1]);
+                  writeln("On loc ", loc, " nei=", nei[arrBegin..arrEnd]);
+                  writeln("On loc ", loc, " neiR=", neiR[arrBegin..arrEnd]); 
+                  writeln("On loc ", loc, " start_i=", start_i[arrBegin..arrEnd]);
+                  writeln("On loc ", loc, " start_iR=", start_iR[arrBegin..arrEnd]);
+                          
+                  // Get the start and end vertices from the edge arrays.
+                  var vertexBegin=src[edgeBegin];
+                  var vertexEnd=src[edgeEnd];
+                  var vertexBeginR=srcR[edgeBegin];
+                  var vertexEndR=srcR[edgeEnd];
+
+                  // Check to see if x is local, between low and high. 
+                  // Helper method for the BFS traversal. 
+                  proc xlocal(x:int, low:int, high:int) : bool {
+                    if (low <= x && x <= high) {
+                      return true;
+                    } 
+                    else {
+                      return false;
+                    }
+                  }
+                          
+                  // These steps I do manually here wheras in the BFS
+                  // code they are done before the calling of the 
+                  // procedure. This is a temporary workaround! 
+                  var GivenRatio = -0.6 * -1;
+                  var LF = 1; 
+                          
+                  // If the ratio is ever greater than 0.6, bottom-up is
+                  // activated. 
+                  var switchratio = (numCurF:real) / nf.size:real;
+                          
+                  /****************** TOP DOWN ********************/
+                  if (switchratio < GivenRatio) {
+                    topdown+=1;
+                    forall i in SetCurF with (ref SetNextF, ref nodes) {
+                      // Current edge has the vertex. 
+                      if ((xlocal(i, vertexBegin, vertexEnd)) || (LF == 0)) {
+                        var numNF = nf[i];
+                        var edgeId = sf[i];
+                        var nextStart = max(edgeId, edgeBegin);
+                        var nextEnd = min(edgeEnd, edgeId+numNF-1);
+                        ref NF = df[nextStart..nextEnd];
+                        forall j in NF with (ref SetNextF, ref nodes){
+                          // Different locales will have different level values.
+                          // We should check if depth[j] != 1. 
+                          if (depth[j] == -1) {
+                            depth[j] = cur_level+1;
+                            SetNextF.add(j);
+                          }
+                          // else {
+                          //   if (depth[j] != cur_level + 1) {
+                          //     // Two cases: is j owned by current locale; or j 
+                          //     // is owned by another locale. 
+
+                          //     // We should compare depth[j] and depth[j+1].
+                          //     // Replace larger by smaller value. 
+
+                          //     // We should have some data structure to keep 
+                          //     // this information to update the depth value 
+                          //     // after BFS. 
+
+                          //     // At the beginning of BFS if there is any updating
+                          //     // information we put into the data array or some
+                          //     // flag showing we need to update. After we update,
+                          //     // we clear the flag. Set the flag to true here. 
+
+                          //     // We get the vertex list based on the edge array
+                          //     // src. Src may not cover all the vertices. For
+                          //     // special case there may such graph. 
+
+                          //     // For locale 0, we need to check the low bound
+                          //     // for the vertices. If low bound is not 0, we
+                          //     // need to include it into the set. 
+
+                          //     // Another case is that for locale i to locale i+1
+                          //     // If the upbound of locale i and the lowbound
+                          //     // of locale i+1 has a hole, we also need to include
+                          //     // such vertices into locale i or locale i+1. This
+                          //     // set is the vertex list. 
+
+                          //     // Last locale we need to pick vertex nv-1 if the upbound
+                          //     // is nv-1. If it is not, then all the vertices must be included
+                          //     // in the last locale. 
+
+                          //     // In this way our set will cover all the vertices. 
+                          //     // We do not need to include the reverse src array. 
+
+                          //     // Keeps track of vertices we should visit. 
+
+                          //     // We should build reverse array for subgraph. 
+
+                          //     // Add some check in reversed array to see if
+                          //     // If it exists in the regular array. 
+
+                          //   }
+                          // }
+                          if (vis[i] == -1) {
+                            vis[i] = component; 
+                            if (nodes.contains(i)) {
+                              nodes.remove(i); 
+                            }
+                          }
+                        }
+                      } 
+                      if ((xlocal(i, vertexBeginR, vertexEndR)) || (LF == 0))  {
+                        var numNF = nfR[i];
+                        var edgeId = sfR[i];
+                        var nextStart = max(edgeId, edgeBegin);
+                        var nextEnd = min(edgeEnd, edgeId+numNF-1);
+                        ref NF = dfR[nextStart..nextEnd];
+                        forall j in NF with (ref SetNextF, ref nodes) {
+                          if (depth[j] == -1) {
+                            depth[j] = cur_level+1;
+                            SetNextF.add(j);
+                          }
+                          if (vis[i] == -1) {
+                            vis[i] = component; 
+                            if (nodes.contains(i)) {
+                              nodes.remove(i); 
+                            }
+                          }
+                        }
+                      }
+                    }//end forall
+                  } 
+                  /****************** BOTTOM UP ********************/
+                  else {
+                    bottomup+=1;
+                    forall i in vertexBegin..vertexEnd  with (ref SetNextF, ref nodes) {
+                      if (depth[i] == -1) {
+                        var numNF = nf[i];
+                        var edgeId = sf[i];
+                        var nextStart = max(edgeId, edgeBegin);
+                        var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                        ref NF = df[nextStart..nextEnd];
+                        forall j in NF with (ref SetNextF, ref nodes){
+                          if (SetCurF.contains(j)) {
+                            depth[i] = cur_level+1;
+                            SetNextF.add(i);
+                          }
+                          if (vis[i] == -1) {
+                            vis[i] = component; 
+                            if (nodes.contains(i)) {
+                              nodes.remove(i); 
+                            }
+                          }
+                        }
+
+                      }
+                    }
+                    forall i in vertexBeginR..vertexEndR  with (ref SetNextF, ref nodes) {
+                      if (depth[i] == -1) {
+                        var numNF = nfR[i];
+                        var edgeId = sfR[i];
+                        var nextStart = max(edgeId, edgeBegin);
+                        var nextEnd = min(edgeEnd, edgeId+numNF - 1);
+                        ref NF = dfR[nextStart..nextEnd];
+                        forall j in NF with (ref SetNextF, ref nodes)  {
+                          if (SetCurF.contains(j)) {
+                            depth[i] = cur_level+1;
+                            SetNextF.add(i);
+                          }
+                          if (vis[i] == -1) {
+                            vis[i] = component; 
+                            if (nodes.contains(i)) {
+                              nodes.remove(i); 
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }//end on loc
+              }//end coforall loc
+              cur_level+=1;
+              numCurF=SetNextF.getSize();
+              SetCurF<=>SetNextF;
+              SetNextF.clear();
+            }//end BFS while  
+            // Increase the component number by 1 to find the next component. 
+            component = component + 1;
+
+            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+            // writeln("$$$$$$$$$$$$$$$Search Radius = ", cur_level+1,"$$$$$$$$$$$$$$$$$$$$$$");
+            // writeln("$$$$$$$$$$number of top down = ",topdown, " number of bottom up=", bottomup,"$$$$$$");
+            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+
+          }//end component while
+          
+          // TO-DO: Figure out how to do the merge! 
+          writeln("On loc ", loc, " vis = ", vis);
+        }//end on loc
+      }//end coforall
+      writeln(" "); 
+      return "success";
+    }//end of cc_kernel_und_opt
+
+    // We only care for undirected graphs, they can be weighted or unweighted. 
+    if (Weighted == 0)  {
+      if (Directed == 0) {
+          // writeln("#####Entering naive connected components#####");
+          (srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN) = restpart.splitMsgToTuple(8);
+          var ag = new owned SegGraphUD(Nv, Ne, Directed, Weighted, srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, st);
+          for i in 0..0 {
+            timer.start(); 
+            var temp = cc_kernel_und(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+            timer.stop(); 
+          }
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$Naive CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+
+          writeln("#####Entering optimized connected components#####");
+          for i in 0..0 {
+            timer.start(); 
+            var temp2 = cc_kernel_und_opt(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+            timer.stop(); 
+          }
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$Optimized CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+      }
+    }
+    if (Weighted == 1) {
+      if (Directed == 0) {
+          writeln("#####Entering naive connected components#####");
+          (srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, vweightN, eweightN) = restpart.splitMsgToTuple(10);
+          var ag = new owned SegGraphUDW(Nv, Ne, Directed, Weighted, srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, vweightN, eweightN, st);
+          var temp = cc_kernel_und(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+          timer.stop(); 
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$Naive CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+
+          writeln("#####Entering optimized connected components#####");
+          timer.start(); 
+          var temp2 = cc_kernel_und_opt(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+          timer.stop(); 
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$Optimized CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+      }
+    }
+    
+    // The message that is sent back to the Python front-end. 
+    proc return_CC(): string throws {
+        CCName = st.nextName();
+        var CCEntry = new shared SymEntry(visited);
+        st.addEntry(CCName, CCEntry);
+
+        var CCMsg =  'created ' + st.attrib(CCName);
+        return CCMsg;
+    }
+
+    var repMsg = return_CC();
+    return new MsgTuple(repMsg, MsgType.NORMAL);
+  }
 }
-
-
