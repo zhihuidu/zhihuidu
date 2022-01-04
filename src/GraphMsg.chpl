@@ -17251,24 +17251,25 @@ module GraphMsg {
     var timer:Timer; 
     timer.start(); 
 
-    // Change the visited array to all -1. 
-    coforall loc in Locales {
-      on loc {
-        forall i in visited.localSubdomain() {
-          visited[i] = -1; 
-        }
-      }
-    }
-
     // Implementation of the algorithm for undirected graphs, they can be 
     // weighted or unweighted. 
     proc cc_kernel_und(nei:[?D1] int, start_i:[?D2] int,src:[?D3] int, dst:[?D4] int, neiR:[?D11] int, start_iR:[?D12] int,srcR:[?D13] int, dstR:[?D14] int):string throws { 
       // Look for the first instance of -1 and get the first vertex to
       // start BFS at. The first component is obviously component 1. 
+
+      // Change the visited array to all -1. 
+      coforall loc in Locales {
+        on loc {
+          forall i in visited.localSubdomain() {
+            visited[i] = -1; 
+          }
+        }
+      }
+
       var finder = visited.find(-1); 
       var unvisited:bool = finder[0]; 
       var nextVertex:int = finder[1];
-      var component:int = 1; 
+      var component:int = 0; 
 
       // writeln("src=", src);
       // writeln("dst=", dst);
@@ -17460,30 +17461,37 @@ module GraphMsg {
           SetNextF.clear();
         }//end while  
 
+        // Increase the component number to find the next component, if it exists.
         finder = visited.find(-1);
         unvisited = finder[0]; 
         nextVertex = finder[1];
         component += 1; 
-
-        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-        // writeln("$$$$$$$$$$$$$$$Search Radius = ", cur_level+1,"$$$$$$$$$$$$$$$$$$$$$$");
-        // writeln("$$$$$$$$$$number of top down = ",topdown, " number of bottom up=", bottomup,"$$$$$$");
-        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-        // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
       } // end outermost while
-      writeln("Naive visited = ", visited); 
+      writeln("Serial visited = ", visited);
+
+      var maxC = max reduce visited; 
+      writeln("max value = ", maxC); 
+
+      var hist = makeDistArray(maxC + 1, atomic int); 
+
+      forall i in visited {
+        hist[i].fetchAdd(1);
+      }
+
+      writeln("hist = ", hist); 
+
       return "success";
     }//end of cc_kernel_und
 
-    // Implementation of the optimized algorithm for undirected graphs, 
+    // Implementation of a second algorithm for undirected graphs, 
     // they can be weighted or unweighted. 
-    proc cc_kernel_und_opt(nei:[?D1] int, start_i:[?D2] int,src:[?D3] int, dst:[?D4] int, neiR:[?D11] int, start_iR:[?D12] int,srcR:[?D13] int, dstR:[?D14] int):string throws { 
+    proc cc_kernel_und_1(nei:[?D1] int, start_i:[?D2] int,src:[?D3] int, dst:[?D4] int, neiR:[?D11] int, start_iR:[?D12] int,srcR:[?D13] int, dstR:[?D14] int):string throws { 
       // Initialize the distributed loop over the locales. All the work is going to be split
       // amongst how many locales are available in a cluster. 
       coforall loc in Locales {
         on loc {
-          // Initialize the nodes set.
+          // Initialize the nodes set. Keeps track of all the nodes that are
+          // found in a particular induced subgraph. 
           var nodes: set(int, parSafe=true);  
           var low = src.localSubdomain().low; 
           var high = src.localSubdomain().high; 
@@ -17504,7 +17512,12 @@ module GraphMsg {
             i = -1; 
           }
 
-          var component = 1; 
+          forall i in visited.localSubdomain() {
+            visited[i] = -1; 
+          }
+
+          // var component = here.id * 1000000000;
+          var component = 0; 
           while (!nodes.isEmpty()) {
             // Get the root. 
             var temp = nodes.toArray(); 
@@ -17533,12 +17546,15 @@ module GraphMsg {
             var depth = makeDistArray(Nv, int); 
 
             // Initialize the depth array. 
-            coforall loc in Locales {
-              on loc {
-                forall i in visited.localSubdomain() {
-                  depth[i] = -1; 
-                }
-              }
+            // coforall loc in Locales {
+            //   on loc {
+            //     forall i in visited.localSubdomain() {
+            //       depth[i] = -1; 
+            //     }
+            //   }
+            // }
+            forall i in depth.localSubdomain() {
+              depth[i] = -1; 
             }
 
             // The BFS while loop for while the number of vertices in the current 
@@ -17569,14 +17585,16 @@ module GraphMsg {
                   var arrBegin = nei.localSubdomain().low; 
                   var arrEnd = nei.localSubdomain().high; 
 
-                  writeln("On loc ", loc, " src=", src[edgeBegin..edgeEnd]);
-                  writeln("On loc ", loc, " dst=", dst[edgeBegin..edgeEnd]); 
-                  writeln("On loc ", loc, " srcR=", srcR[edgeBegin1..edgeEnd1]);
-                  writeln("On loc ", loc, " dstR=", dstR[edgeBegin1..edgeEnd1]);
-                  writeln("On loc ", loc, " nei=", nei[arrBegin..arrEnd]);
-                  writeln("On loc ", loc, " neiR=", neiR[arrBegin..arrEnd]); 
-                  writeln("On loc ", loc, " start_i=", start_i[arrBegin..arrEnd]);
-                  writeln("On loc ", loc, " start_iR=", start_iR[arrBegin..arrEnd]);
+                  // if (here.id == 0) {
+                    // writeln("On loc ", loc, " src=", src[edgeBegin..edgeEnd]);
+                    // writeln("On loc ", loc, " dst=", dst[edgeBegin..edgeEnd]); 
+                    // writeln("On loc ", loc, " srcR=", srcR[edgeBegin1..edgeEnd1]);
+                    // writeln("On loc ", loc, " dstR=", dstR[edgeBegin1..edgeEnd1]);
+                    // writeln("On loc ", loc, " nei=", nei[arrBegin..arrEnd]);
+                    // writeln("On loc ", loc, " neiR=", neiR[arrBegin..arrEnd]); 
+                    // writeln("On loc ", loc, " start_i=", start_i[arrBegin..arrEnd]);
+                    // writeln("On loc ", loc, " start_iR=", start_iR[arrBegin..arrEnd]);
+                  // }
                           
                   // Get the start and end vertices from the edge arrays.
                   var vertexBegin=src[edgeBegin];
@@ -17753,89 +17771,111 @@ module GraphMsg {
               SetCurF<=>SetNextF;
               SetNextF.clear();
             }//end BFS while  
+            
             // Increase the component number by 1 to find the next component. 
             component = component + 1;
-
-            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-            // writeln("$$$$$$$$$$$$$$$Search Radius = ", cur_level+1,"$$$$$$$$$$$$$$$$$$$$$$");
-            // writeln("$$$$$$$$$$number of top down = ",topdown, " number of bottom up=", bottomup,"$$$$$$");
-            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-            // writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-
           }//end component while
           
           // TO-DO: Figure out how to do the merge! 
           writeln("On loc ", loc, " vis = ", vis);
+
+          // Below merging steps failed... try something more serialized. 
+          // forall i in vis.domain {
+          //   if (visited[i] == -1) {
+          //     if (vis[i] != -1) {
+          //       if (vis[i] > visited[i]) {
+          //         visited[i] = vis[i];
+          //       }
+          //     }
+          //   }
+          //   // else if (vis[i] < visited[i]) {
+          //   //   if (vis[i] != 1) {
+          //   //     visited[i] = vis[i]; 
+          //   //   }
+          //   // }
+          // }
         }//end on loc
       }//end coforall
-      writeln(" "); 
+      writeln("Parallel visited = ", visited); 
+
+      // var maxC = max reduce visited; 
+      // writeln("max value = ", maxC); 
+
+      // var hist = makeDistArray(maxC + 1, atomic int); 
+
+      // forall i in visited {
+      //   hist[i].fetchAdd(1);
+      // }
+
+      // writeln("hist = ", hist); 
+
       return "success";
-    }//end of cc_kernel_und_opt
+    }//end of cc_kernel_und_1
 
     // We only care for undirected graphs, they can be weighted or unweighted. 
     if (Weighted == 0)  {
       if (Directed == 0) {
-          // writeln("#####Entering naive connected components#####");
-          (srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN) = restpart.splitMsgToTuple(8);
-          var ag = new owned SegGraphUD(Nv, Ne, Directed, Weighted, srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, st);
-          for i in 0..0 {
-            timer.start(); 
-            var temp = cc_kernel_und(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
-            timer.stop(); 
-          }
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$Naive CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("#####Entering serial connected components#####");
+        (srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN) = restpart.splitMsgToTuple(8);
+        var ag = new owned SegGraphUD(Nv, Ne, Directed, Weighted, srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, st);
+        timer.stop(); 
+        for i in 0..0 {
+          timer.start(); 
+          var temp = cc_kernel_und(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+          timer.stop(); 
+        }
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$Serial CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
 
-          writeln("#####Entering optimized connected components#####");
-          for i in 0..0 {
-            timer.start(); 
-            var temp2 = cc_kernel_und_opt(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
-            timer.stop(); 
-          }
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$Optimized CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("\n\n#####Entering connected components 1#####");
+        for i in 0..0 {
+          timer.start(); 
+          var temp2 = cc_kernel_und_1(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+          timer.stop(); 
+        }
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$CC 1 Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
       }
     }
     if (Weighted == 1) {
       if (Directed == 0) {
-          writeln("#####Entering naive connected components#####");
-          (srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, vweightN, eweightN) = restpart.splitMsgToTuple(10);
-          var ag = new owned SegGraphUDW(Nv, Ne, Directed, Weighted, srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, vweightN, eweightN, st);
-          var temp = cc_kernel_und(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
-          timer.stop(); 
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$Naive CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("#####Entering serial connected components#####");
+        (srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, vweightN, eweightN) = restpart.splitMsgToTuple(10);
+        var ag = new owned SegGraphUDW(Nv, Ne, Directed, Weighted, srcN, dstN, startN, neighbourN, srcRN, dstRN, startRN, neighbourRN, vweightN, eweightN, st);
+        var temp = cc_kernel_und(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+        timer.stop(); 
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$Serial CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
 
-          writeln("#####Entering optimized connected components#####");
-          timer.start(); 
-          var temp2 = cc_kernel_und_opt(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
-          timer.stop(); 
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$Optimized CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-          writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("\n\n#####Entering connected components 1#####");
+        timer.start(); 
+        var temp2 = cc_kernel_und_1(ag.neighbour.a, ag.start_i.a, ag.src.a, ag.dst.a, ag.neighbourR.a, ag.start_iR.a, ag.srcR.a, ag.dstR.a);
+        timer.stop(); 
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$Optimized CC Time = ", timer.elapsed() ,"$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+        writeln("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
       }
     }
     
     // The message that is sent back to the Python front-end. 
     proc return_CC(): string throws {
-        CCName = st.nextName();
-        var CCEntry = new shared SymEntry(visited);
-        st.addEntry(CCName, CCEntry);
+      CCName = st.nextName();
+      var CCEntry = new shared SymEntry(visited);
+      st.addEntry(CCName, CCEntry);
 
-        var CCMsg =  'created ' + st.attrib(CCName);
-        return CCMsg;
+      var CCMsg =  'created ' + st.attrib(CCName);
+      return CCMsg;
     }
 
     var repMsg = return_CC();
